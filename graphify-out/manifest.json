@@ -1,0 +1,127 @@
+{
+  ".claude/settings.local.json": {
+    "mtime": 1779907590.5751412,
+    "ast_hash": "bafcc64efbed46768d9ca68c33457f60",
+    "semantic_hash": ""
+  },
+  "app_brother/build.py": {
+    "mtime": 1779558363.9313266,
+    "ast_hash": "f86a70c0d0d85f2a52fccc2b84a5f003",
+    "semantic_hash": ""
+  },
+  "app_brother/main.py": {
+    "mtime": 1779557311.070373,
+    "ast_hash": "57fcefe740044e2a43bbd8f5501a1332",
+    "semantic_hash": ""
+  },
+  "app_brother/modules/__init__.py": {
+    "mtime": 1779557030.1345603,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "app_brother/modules/gui.py": {
+    "mtime": 1779907831.6525784,
+    "ast_hash": "52cdd3bd1fffae3a03f3ced4f6fc5c2e",
+    "semantic_hash": ""
+  },
+  "app_brother/modules/pdf_extract.py": {
+    "mtime": 1783170359.8765469,
+    "ast_hash": "43951d7089d86a84f04179204cb0a0a9",
+    "semantic_hash": ""
+  },
+  "app_brother/modules/printer.py": {
+    "mtime": 1779553260.0460854,
+    "ast_hash": "64944c8509620fb69c9f6b9efc1a36ef",
+    "semantic_hash": ""
+  },
+  "app_zebra/build.py": {
+    "mtime": 1779558323.6193278,
+    "ast_hash": "97266fe717b1b4ed8183625cec4b7b6d",
+    "semantic_hash": ""
+  },
+  "app_zebra/config/__init__.py": {
+    "mtime": 1779557030.1135604,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "app_zebra/config/config.py": {
+    "mtime": 1779557030.1140149,
+    "ast_hash": "d22f7f6d7196e3a393fc317c5df9fb4f",
+    "semantic_hash": ""
+  },
+  "app_zebra/main.py": {
+    "mtime": 1779557065.8365366,
+    "ast_hash": "43ae1535883cafaca80c5218958ce1a8",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/__init__.py": {
+    "mtime": 1779557030.1235604,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/epl_label.py": {
+    "mtime": 1783170372.6669927,
+    "ast_hash": "b2249e2f3c271dee1e0dbc74280f041c",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/gui.py": {
+    "mtime": 1779907633.012143,
+    "ast_hash": "8330f98e178fb8dd083c190bc9cf3374",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/label_layout.py": {
+    "mtime": 1779903383.8070161,
+    "ast_hash": "ca4fc8d7870f90dadd75b918cab4a9a4",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/label_text.py": {
+    "mtime": 1779557030.1190956,
+    "ast_hash": "3d84d821d13eda64907af20190f47bb5",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/pdf_extract.py": {
+    "mtime": 1783170355.1023734,
+    "ast_hash": "43951d7089d86a84f04179204cb0a0a9",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/printer.py": {
+    "mtime": 1779232853.5838265,
+    "ast_hash": "812151e8042c8e49862d79db030e3c2d",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/txt_extract.py": {
+    "mtime": 1779557030.1166296,
+    "ast_hash": "c98d0cc813a6e515212cea6ed00a3646",
+    "semantic_hash": ""
+  },
+  "app_zebra/modules/zpl_label.py": {
+    "mtime": 1783170365.136738,
+    "ast_hash": "cd47369d6f94e178294cac64b119e5de",
+    "semantic_hash": ""
+  },
+  ".github/workflows/build.yml": {
+    "mtime": 1779558790.6097891,
+    "ast_hash": "ad3686b8840d05fdd2c5aee7e8359a28",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1779469275.3981833,
+    "ast_hash": "a0bd6415b04d2c52ab1ea19ce3b14dab",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-05-27-barcode-number-toggle-design.md": {
+    "mtime": 1779902703.1074574,
+    "ast_hash": "646aede3dee5f272bf165a3cd4041340",
+    "semantic_hash": ""
+  },
+  "app_brother/assets/brother_logo.png": {
+    "mtime": 1779557030.1358716,
+    "ast_hash": "8d3f8e2324371c4cf14caa769cbe2765",
+    "semantic_hash": ""
+  },
+  "app_zebra/assets/zebra_logo.png": {
+    "mtime": 1779557030.1252754,
+    "ast_hash": "4e39a725b0cdc30062c45bb14dca220e",
+    "semantic_hash": ""
+  }
+}

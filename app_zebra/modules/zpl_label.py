@@ -56,7 +56,7 @@ def _barcode(barcode, x, print_barcode_number=True):
     hr = "Y" if print_barcode_number else "N"
     digits = barcode_digits(barcode)
     bx = x + _BARCODE_X
-    if len(digits) >= 12:
+    if len(digits) == 13:
         # ^BE = EAN-13; usa 12 digitos, el 13ro es verificador calculado.
         return f"^FO{bx},{_BARCODE_Y}^BY2^BEN,40,{hr},N^FD{digits[:12]}^FS\r\n"
     # Sin un EAN valido se cae a Code 128.

@@ -5,7 +5,7 @@ import re
 import fitz  # PyMuPDF
 
 # Una linea de 12 a 14 digitos puros se considera codigo de barras.
-_BARCODE_RE = re.compile(r"^\d{12,14}$")
+_BARCODE_RE = re.compile(r"^\d+$")
 # Una linea que es solo "(...)" se considera referencia interna y se ignora.
 _REF_RE = re.compile(r"^\([^()]*\)$")
 # Codigo de referencia interna tipo "855-2/55029".
