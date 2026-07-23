@@ -131,6 +131,14 @@ class BrotherLabelPrinterApp(ctk.CTk):
         self.preview.pack(pady=8)
         self.preview.configure(state="disabled")
 
+        name_frame = ctk.CTkFrame(self, fg_color="transparent")
+        name_frame.pack(pady=(0, 8), padx=20, fill="x")
+        ctk.CTkLabel(name_frame, text="Nombre (editable):").pack(
+            side="left", padx=(12, 8)
+        )
+        self.name_entry = ctk.CTkEntry(name_frame, width=300)
+        self.name_entry.pack(side="left", padx=(0, 0), fill="x", expand=True)
+
         self.print_price_var = ctk.BooleanVar(value=self.saved_print_price)
         ctk.CTkCheckBox(
             self,
@@ -218,6 +226,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
         if not self.labels:
             self.info_label.configure(text="Ningún PDF cargado")
             self._set_preview("")
+            self.name_entry.delete(0, "end")
             self.print_button.configure(state="disabled")
             return
 
@@ -234,6 +243,8 @@ class BrotherLabelPrinterApp(ctk.CTk):
             f"Nombre:  {first['name'] or '(no detectado)'}\n"
             f"Precio:  {first['price'] or '(no detectado)'}"
         )
+        self.name_entry.delete(0, "end")
+        self.name_entry.insert(0, first["name"])
         self.print_button.configure(state="normal")
 
     def _load_pdf(self):
@@ -260,7 +271,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self._set_status(f"No se pudo cargar el archivo: {e}", "red")
             return
 
-    def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True):
+    def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None):
         """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm)."""
         import fitz
         
@@ -301,6 +312,36 @@ class BrotherLabelPrinterApp(ctk.CTk):
                         extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
                         page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
 
+                # 2.5. Reemplazar el nombre original si se especificó uno editado
+                if override_name and labels and i < len(labels):
+                    name_lines = labels[i].get("name_lines") or []
+                    line_rects = [
+                        r for line in name_lines for r in page.search_for(line)
+                    ]
+                    if line_rects:
+                        name_rect = line_rects[0]
+                        for r in line_rects[1:]:
+                            name_rect.include_rect(r)
+                        extended_rect = fitz.Rect(
+                            0, name_rect.y0 - 2, page.rect.width, name_rect.y1 + 2
+                        )
+                        page.draw_rect(
+                            extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True
+                        )
+                        text_unit_width = fitz.get_text_length(
+                            override_name, fontname="helv", fontsize=1
+                        )
+                        font_by_width = (extended_rect.width * 0.92) / text_unit_width
+                        font_by_height = (extended_rect.height * 0.9) / 1.15
+                        font_size = max(6, min(14, font_by_width, font_by_height))
+                        page.insert_textbox(
+                            extended_rect,
+                            override_name,
+                            fontsize=font_size,
+                            fontname="helv",
+                            align=1,
+                        )
+
                 # 3. Conservamos el 100% de la página original (sin recortes para evitar cortes de texto)
                 orig_rect = page.rect
                 clip_rect = orig_rect
@@ -339,6 +380,10 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self._set_status("Elegí una impresora válida.", "red")
             return
 
+        edited_name = self.name_entry.get().strip()
+        original_name = self.labels[0]["name"].strip() if self.labels else ""
+        override_name = edited_name if edited_name and edited_name != original_name else None
+
         try:
             self._set_status(f"Enviando a {target['name']}...", "gray")
             self.print_button.configure(state="disabled")
@@ -349,6 +394,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
                 self.print_price_var.get(),
                 labels=self.labels,
                 print_barcode_number=self.print_barcode_number_var.get(),
+                override_name=override_name,
             )
 
             # Imprimir PDF nativo directamente sin corte automático intermedio (sólo al final de la tira)

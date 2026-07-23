@@ -57,5 +57,6 @@ def _parse_page(text):
     return {
         "barcode": barcode,
         "name": " ".join(name_parts),
+        "name_lines": name_parts,
         "price": price,
     }

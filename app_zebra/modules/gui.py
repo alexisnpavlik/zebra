@@ -91,6 +91,14 @@ class LabelPrinterApp(ctk.CTk):
         self.preview.pack(pady=8)
         self.preview.configure(state="disabled")
 
+        name_frame = ctk.CTkFrame(self, fg_color="transparent")
+        name_frame.pack(pady=(0, 8), padx=20, fill="x")
+        ctk.CTkLabel(name_frame, text="Nombre (editable):").pack(
+            side="left", padx=(12, 8)
+        )
+        self.name_entry = ctk.CTkEntry(name_frame, width=300)
+        self.name_entry.pack(side="left", padx=(0, 0), fill="x", expand=True)
+
         self.print_price_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
             self,
@@ -197,6 +205,8 @@ class LabelPrinterApp(ctk.CTk):
             f"Nombre:  {first['name'] or '(no detectado)'}\n"
             f"Precio:  {first['price'] or '(no detectado)'}"
         )
+        self.name_entry.delete(0, "end")
+        self.name_entry.insert(0, first["name"])
         self.print_button.configure(state="normal")
         self._set_status("PDF cargado. Listo para imprimir.", "green")
 
@@ -209,11 +219,18 @@ class LabelPrinterApp(ctk.CTk):
             self._set_status("Elegi una impresora valida.", "red")
             return
 
+        edited_name = self.name_entry.get().strip()
+        labels_to_print = self.labels
+        if edited_name:
+            labels_to_print = [
+                {**label, "name": edited_name} for label in self.labels
+            ]
+
         try:
             self._set_status(f"Enviando a {target['name']}...", "gray")
             self.print_button.configure(state="disabled")
             job = build_print_job(
-                self.labels,
+                labels_to_print,
                 target["language"],
                 print_price=self.print_price_var.get(),
                 print_barcode_number=self.print_barcode_number_var.get(),
