@@ -6,6 +6,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+from modules import barcode_render
 from modules import pdf_extract
 from modules import printer
 
@@ -28,7 +29,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Impresor de etiquetas Brother QL-800")
-        self.geometry("520x640")
+        self.geometry("520x680")
         self.resizable(False, False)
 
         # Cargar icono de la aplicación
@@ -139,6 +140,14 @@ class BrotherLabelPrinterApp(ctk.CTk):
         )
         self.preview.pack(pady=8)
         self.preview.configure(state="disabled")
+
+        barcode_frame = ctk.CTkFrame(self, fg_color="transparent")
+        barcode_frame.pack(pady=(0, 4), padx=20, fill="x")
+        ctk.CTkLabel(barcode_frame, text="Código (editable):").pack(
+            side="left", padx=(12, 8)
+        )
+        self.barcode_entry = ctk.CTkEntry(barcode_frame, width=300)
+        self.barcode_entry.pack(side="left", fill="x", expand=True)
 
         name_frame = ctk.CTkFrame(self, fg_color="transparent")
         name_frame.pack(pady=(0, 8), padx=20, fill="x")
@@ -276,6 +285,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
         if not self.labels:
             self.info_label.configure(text="Ningún PDF cargado")
             self._set_preview("")
+            self.barcode_entry.delete(0, "end")
             self.name_entry.delete(0, "end")
             self.print_button.configure(state="disabled")
             return
@@ -293,6 +303,8 @@ class BrotherLabelPrinterApp(ctk.CTk):
             f"Nombre:  {first['name'] or '(no detectado)'}\n"
             f"Precio:  {first['price'] or '(no detectado)'}"
         )
+        self.barcode_entry.delete(0, "end")
+        self.barcode_entry.insert(0, first["barcode"])
         self.name_entry.delete(0, "end")
         self.name_entry.insert(0, first["name"])
         self.print_button.configure(state="normal")
@@ -321,17 +333,21 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self._set_status(f"No se pudo cargar el archivo: {e}", "red")
             return
 
-    def _enlarge_barcode_number(self, page, barcode, scale=None):
-        """Redibuja el número legible del código de barras con una tipografía más grande.
+    def _redraw_barcode_number(self, page, barcode, new_text=None, scale=None, draw=True):
+        """Tapa el número legible original y lo vuelve a dibujar más grande.
 
         El número se agranda hacia arriba desde su línea base original, sin invadir
         el espacio de la imagen del código de barras ni salirse del ancho de la página.
+        Ubica el texto por coincidencia exacta del span, así un código corto que
+        aparece dentro del nombre o de la referencia interna no las afecta.
 
         Args:
             page: página de PyMuPDF a modificar.
-            barcode: dígitos del código de barras a ubicar dentro de la página.
+            barcode: dígitos originales, para ubicar el texto dentro de la página.
+            new_text: texto a dibujar en lugar del original; None para redibujar el mismo.
             scale: factor de ampliación sobre el tamaño original; si es None se toma
                 el valor configurado en la GUI.
+            draw: False para sólo taparlo, sin volver a dibujarlo.
         """
         import fitz
 
@@ -362,33 +378,60 @@ class BrotherLabelPrinterApp(ctk.CTk):
             if block_rect.y1 <= rect.y0 + 0.5:
                 top_limit = max(top_limit, block_rect.y1)
 
+        text = new_text if new_text is not None else barcode
+
         # Los dígitos crecen desde la línea base hacia arriba (~0.75 del cuerpo tipográfico).
         max_by_height = (baseline_y - top_limit - 1.0) / 0.75
-        unit_width = fitz.get_text_length(barcode, fontname="helv", fontsize=1)
+        unit_width = fitz.get_text_length(text, fontname="helv", fontsize=1)
         max_by_width = (page.rect.width - origin_x - 2.0) / unit_width if unit_width else original_size
-        new_size = min(original_size * scale, max_by_height, max_by_width)
+        new_size = max(min(original_size * scale, max_by_height, max_by_width), original_size)
 
-        if new_size <= original_size * 1.02:
+        if draw and new_text is None and new_size <= original_size * 1.02:
             return  # no hay espacio para agrandarlo, se deja como está
 
         white_rect = fitz.Rect(
             rect.x0 - 1,
             max(rect.y0 - 1, top_limit + 0.2),
-            rect.x1 + 1,
+            max(rect.x1, rect.x0 + new_size * unit_width) + 1,
             rect.y1 + 1,
         )
         page.draw_rect(white_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+
+        if not draw:
+            return
+
         page.insert_text(
             fitz.Point(origin_x, baseline_y),
-            barcode,
+            text,
             fontsize=new_size,
             fontname="helv",
             color=(0, 0, 0),
         )
 
-    def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None):
+    def _replace_barcode_image(self, page, png_bytes):
+        """Tapa el código de barras original de Odoo y dibuja el nuevo en su lugar.
+
+        Args:
+            page: página de PyMuPDF a modificar.
+            png_bytes: imagen del código de barras nuevo, ya generada.
+        """
+        import fitz
+
+        images = page.get_images(full=True)
+        if not images:
+            return
+
+        rect = max((page.get_image_bbox(img) for img in images), key=lambda r: r.get_area())
+        page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+        page.insert_image(rect, stream=png_bytes, keep_proportion=False, overlay=True)
+
+    def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None, override_barcode=None):
         """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm)."""
         import fitz
+
+        override_barcode_png = None
+        if override_barcode:
+            override_barcode_png, override_barcode = barcode_render.render_png(override_barcode)
         
         doc = fitz.open(original_pdf_path)
         new_doc = fitz.open()
@@ -420,15 +463,23 @@ class BrotherLabelPrinterApp(ctk.CTk):
                         extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
                         page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
 
-                # 2. Tapar o agrandar el número del código de barras
+                # 2. Reemplazar, tapar o agrandar el código de barras y su número
                 if labels and i < len(labels) and labels[i]["barcode"]:
-                    if not print_barcode_number:
+                    if override_barcode_png:
+                        self._replace_barcode_image(page, override_barcode_png)
+                        self._redraw_barcode_number(
+                            page,
+                            labels[i]["barcode"],
+                            new_text=override_barcode,
+                            draw=print_barcode_number,
+                        )
+                    elif not print_barcode_number:
                         rects = page.search_for(labels[i]["barcode"])
                         for r in rects:
                             extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
                             page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
                     else:
-                        self._enlarge_barcode_number(page, labels[i]["barcode"])
+                        self._redraw_barcode_number(page, labels[i]["barcode"])
 
                 # 2.5. Reemplazar el nombre original si se especificó uno editado
                 if override_name and labels and i < len(labels):
@@ -502,6 +553,23 @@ class BrotherLabelPrinterApp(ctk.CTk):
         original_name = self.labels[0]["name"].strip() if self.labels else ""
         override_name = edited_name if edited_name and edited_name != original_name else None
 
+        edited_barcode = self.barcode_entry.get().strip()
+        original_barcode = self.labels[0]["barcode"].strip() if self.labels else ""
+        override_barcode = edited_barcode if edited_barcode and edited_barcode != original_barcode else None
+
+        barcode_notice = ""
+        if override_barcode:
+            try:
+                encoded = barcode_render.encoded_code(override_barcode)
+            except Exception as e:
+                self._set_status(f"Código de barras inválido: {e}", "red")
+                return
+            if encoded != override_barcode:
+                self.barcode_entry.delete(0, "end")
+                self.barcode_entry.insert(0, encoded)
+                barcode_notice = f" Dígito verificador corregido: se imprimió {encoded}."
+                override_barcode = encoded
+
         try:
             self._set_status(f"Enviando a {target['name']}...", "gray")
             self.print_button.configure(state="disabled")
@@ -513,11 +581,15 @@ class BrotherLabelPrinterApp(ctk.CTk):
                 labels=self.labels,
                 print_barcode_number=self.print_barcode_number_var.get(),
                 override_name=override_name,
+                override_barcode=override_barcode,
             )
 
             # Imprimir PDF nativo directamente sin corte automático intermedio (sólo al final de la tira)
             job_id = printer.print_pdf(temp_file, target["name"], auto_cut=False)
-            self._set_status(f"Impreso correctamente ({job_id}).", "green")
+            self._set_status(
+                f"Impreso correctamente ({job_id}).{barcode_notice}",
+                "orange" if barcode_notice else "green",
+            )
         except Exception as e:
             self._set_status(f"Error al imprimir: {e}", "red")
         finally:

@@ -23,6 +23,7 @@ def main():
         "--add-data", f"{os.path.join(script_dir, 'assets')}:assets",
         "--collect-all", "customtkinter",
         "--collect-all", "fitz",
+        "--collect-all", "barcode",
         os.path.join(script_dir, "main.py"),
     ]
 
