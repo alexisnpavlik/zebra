@@ -10,6 +10,12 @@ from modules import pdf_extract
 from modules import printer
 
 
+# Factor de ampliacion del numero legible del codigo de barras al imprimir.
+BARCODE_NUMBER_SCALE = 1.45
+BARCODE_NUMBER_SCALE_MIN = 1.0
+BARCODE_NUMBER_SCALE_MAX = 3.0
+
+
 def _display_name(printer_info):
     """Texto que se muestra en el desplegable para una impresora."""
     estado = "" if printer_info["ready"] else "  - sin conexion"
@@ -22,7 +28,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Impresor de etiquetas Brother QL-800")
-        self.geometry("520x600")
+        self.geometry("520x640")
         self.resizable(False, False)
 
         # Cargar icono de la aplicación
@@ -61,6 +67,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
         self.saved_printer = None
         self.saved_print_price = False
         self.saved_print_barcode_number = False
+        self.saved_barcode_scale = BARCODE_NUMBER_SCALE
 
         if os.path.exists(self.settings_path):
             try:
@@ -69,6 +76,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
                     self.saved_printer = data.get("printer")
                     self.saved_print_price = data.get("print_price", False)
                     self.saved_print_barcode_number = data.get("print_barcode_number", False)
+                    self.saved_barcode_scale = data.get("barcode_number_scale", BARCODE_NUMBER_SCALE)
             except Exception as e:
                 print(f"Error al cargar brother settings: {e}")
 
@@ -85,6 +93,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
             "printer": printer_name,
             "print_price": self.print_price_var.get() if hasattr(self, "print_price_var") else False,
             "print_barcode_number": self.print_barcode_number_var.get() if hasattr(self, "print_barcode_number_var") else False,
+            "barcode_number_scale": self._barcode_scale(),
         }
         try:
             with open(self.settings_path, "w", encoding="utf-8") as f:
@@ -152,8 +161,19 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self,
             text="Imprimir número de código de barras",
             variable=self.print_barcode_number_var,
-            command=self._save_settings
+            command=self._on_barcode_number_toggle
         ).pack(pady=(4, 0))
+
+        scale_frame = ctk.CTkFrame(self, fg_color="transparent")
+        scale_frame.pack(pady=(6, 0))
+        ctk.CTkLabel(scale_frame, text="Tamaño del número:").pack(side="left", padx=(0, 8))
+        self.barcode_scale_entry = ctk.CTkEntry(scale_frame, width=60, justify="center")
+        self.barcode_scale_entry.insert(0, f"{self.saved_barcode_scale:g}")
+        self.barcode_scale_entry.pack(side="left")
+        self.barcode_scale_entry.bind("<Return>", lambda event: self._on_barcode_scale_change())
+        self.barcode_scale_entry.bind("<FocusOut>", lambda event: self._on_barcode_scale_change())
+        ctk.CTkLabel(scale_frame, text="x").pack(side="left", padx=(6, 0))
+        self._update_barcode_scale_state()
 
         self.print_button = ctk.CTkButton(
             self,
@@ -169,6 +189,36 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self, text="", font=ctk.CTkFont(size=12), wraplength=480
         )
         self.status_label.pack(side="bottom", pady=16)
+
+    def _barcode_scale(self):
+        """Devuelve el factor de ampliación del número tipeado en la GUI, ya validado.
+
+        Returns:
+            Float entre BARCODE_NUMBER_SCALE_MIN y BARCODE_NUMBER_SCALE_MAX; si el
+            campo no existe todavía o tiene un valor inválido, el valor por defecto.
+        """
+        try:
+            value = float(self.barcode_scale_entry.get().strip().replace(",", "."))
+        except (AttributeError, ValueError):
+            return BARCODE_NUMBER_SCALE
+        return min(max(value, BARCODE_NUMBER_SCALE_MIN), BARCODE_NUMBER_SCALE_MAX)
+
+    def _on_barcode_scale_change(self):
+        """Normaliza lo tipeado en el campo de tamaño y guarda la preferencia."""
+        value = self._barcode_scale()
+        self.barcode_scale_entry.delete(0, "end")
+        self.barcode_scale_entry.insert(0, f"{value:g}")
+        self._save_settings()
+
+    def _update_barcode_scale_state(self):
+        """Habilita el campo de tamaño sólo cuando se imprime el número del código."""
+        state = "normal" if self.print_barcode_number_var.get() else "disabled"
+        self.barcode_scale_entry.configure(state=state)
+
+    def _on_barcode_number_toggle(self):
+        """Se activa al tildar o destildar la impresión del número del código."""
+        self._update_barcode_scale_state()
+        self._save_settings()
 
     def _refresh_printers(self):
         """Detecta las impresoras del sistema y llena el desplegable."""
@@ -271,6 +321,71 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self._set_status(f"No se pudo cargar el archivo: {e}", "red")
             return
 
+    def _enlarge_barcode_number(self, page, barcode, scale=None):
+        """Redibuja el número legible del código de barras con una tipografía más grande.
+
+        El número se agranda hacia arriba desde su línea base original, sin invadir
+        el espacio de la imagen del código de barras ni salirse del ancho de la página.
+
+        Args:
+            page: página de PyMuPDF a modificar.
+            barcode: dígitos del código de barras a ubicar dentro de la página.
+            scale: factor de ampliación sobre el tamaño original; si es None se toma
+                el valor configurado en la GUI.
+        """
+        import fitz
+
+        if scale is None:
+            scale = self._barcode_scale()
+
+        blocks = page.get_text("dict")["blocks"]
+
+        span = None
+        for block in blocks:
+            for line in block.get("lines", []):
+                for candidate in line["spans"]:
+                    if candidate["text"].strip() == barcode:
+                        span = candidate
+                        break
+
+        if span is None:
+            return
+
+        rect = fitz.Rect(span["bbox"])
+        origin_x, baseline_y = span["origin"]
+        original_size = span["size"]
+
+        # Lo más bajo que llega el contenido que está por encima (la imagen del código).
+        top_limit = 0.0
+        for block in blocks:
+            block_rect = fitz.Rect(block["bbox"])
+            if block_rect.y1 <= rect.y0 + 0.5:
+                top_limit = max(top_limit, block_rect.y1)
+
+        # Los dígitos crecen desde la línea base hacia arriba (~0.75 del cuerpo tipográfico).
+        max_by_height = (baseline_y - top_limit - 1.0) / 0.75
+        unit_width = fitz.get_text_length(barcode, fontname="helv", fontsize=1)
+        max_by_width = (page.rect.width - origin_x - 2.0) / unit_width if unit_width else original_size
+        new_size = min(original_size * scale, max_by_height, max_by_width)
+
+        if new_size <= original_size * 1.02:
+            return  # no hay espacio para agrandarlo, se deja como está
+
+        white_rect = fitz.Rect(
+            rect.x0 - 1,
+            max(rect.y0 - 1, top_limit + 0.2),
+            rect.x1 + 1,
+            rect.y1 + 1,
+        )
+        page.draw_rect(white_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+        page.insert_text(
+            fitz.Point(origin_x, baseline_y),
+            barcode,
+            fontsize=new_size,
+            fontname="helv",
+            color=(0, 0, 0),
+        )
+
     def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None):
         """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm)."""
         import fitz
@@ -305,12 +420,15 @@ class BrotherLabelPrinterApp(ctk.CTk):
                         extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
                         page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
 
-                # 2. Tapar número de código de barras si corresponde
-                if not print_barcode_number and labels and i < len(labels) and labels[i]["barcode"]:
-                    rects = page.search_for(labels[i]["barcode"])
-                    for r in rects:
-                        extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
-                        page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+                # 2. Tapar o agrandar el número del código de barras
+                if labels and i < len(labels) and labels[i]["barcode"]:
+                    if not print_barcode_number:
+                        rects = page.search_for(labels[i]["barcode"])
+                        for r in rects:
+                            extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
+                            page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+                    else:
+                        self._enlarge_barcode_number(page, labels[i]["barcode"])
 
                 # 2.5. Reemplazar el nombre original si se especificó uno editado
                 if override_name and labels and i < len(labels):
