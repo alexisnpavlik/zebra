@@ -452,12 +452,12 @@ class BrotherLabelPrinterApp(ctk.CTk):
             color=(0, 0, 0),
         )
 
-    def _replace_barcode_image(self, page, png_bytes):
-        """Tapa el código de barras original de Odoo y dibuja el nuevo en su lugar.
+    def _replace_barcode_bars(self, page, pattern):
+        """Tapa el código de barras original de Odoo y dibuja el nuevo como vectores.
 
         Args:
             page: página de PyMuPDF a modificar.
-            png_bytes: imagen del código de barras nuevo, ya generada.
+            pattern: patrón de '1' y '0', un carácter por módulo del código.
         """
         import fitz
 
@@ -467,15 +467,30 @@ class BrotherLabelPrinterApp(ctk.CTk):
 
         rect = max((page.get_image_bbox(img) for img in images), key=lambda r: r.get_area())
         page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-        page.insert_image(rect, stream=png_bytes, keep_proportion=False, overlay=True)
+
+        quiet = barcode_render.QUIET_ZONE_MODULES
+        module_width = rect.width / (len(pattern) + 2 * quiet)
+        x = rect.x0 + quiet * module_width
+
+        run_start = None
+        for index, module in enumerate(pattern + "0"):
+            if module == "1" and run_start is None:
+                run_start = index
+            elif module == "0" and run_start is not None:
+                bar = fitz.Rect(
+                    x + (run_start - index) * module_width, rect.y0, x, rect.y1
+                )
+                page.draw_rect(bar, color=None, fill=(0, 0, 0), width=0, overlay=True)
+                run_start = None
+            x += module_width
 
     def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None, override_barcode=None):
         """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm)."""
         import fitz
 
-        override_barcode_png = None
+        override_barcode_pattern = None
         if override_barcode:
-            override_barcode_png, override_barcode = barcode_render.render_png(override_barcode)
+            override_barcode_pattern, override_barcode = barcode_render.modules(override_barcode)
         
         doc = fitz.open(original_pdf_path)
         new_doc = fitz.open()
@@ -509,8 +524,8 @@ class BrotherLabelPrinterApp(ctk.CTk):
 
                 # 2. Reemplazar, tapar o agrandar el código de barras y su número
                 if labels and i < len(labels) and labels[i]["barcode"]:
-                    if override_barcode_png:
-                        self._replace_barcode_image(page, override_barcode_png)
+                    if override_barcode_pattern:
+                        self._replace_barcode_bars(page, override_barcode_pattern)
                         self._redraw_barcode_number(
                             page,
                             labels[i]["barcode"],

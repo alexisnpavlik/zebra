@@ -10,6 +10,11 @@ _BARCODE_RE = re.compile(r"^\d+$")
 _REF_RE = re.compile(r"^\([^()]*\)$")
 # Codigo de referencia interna tipo "855-2/55029".
 _INTERNAL_REF_RE = re.compile(r"^\d+-\d+/\d+$")
+# Referencia sola, sin espacios y abierta con parentesis o corchete, tipo
+# "(658488/202039E/2020" (Odoo la corta sin cerrar).
+_OPEN_REF_RE = re.compile(r"^[\[(][^\s]*$")
+# Prefijo "[referencia]" con el que Odoo encabeza el nombre del producto.
+_REF_PREFIX_RE = re.compile(r"^\[[^\]]*\]\s*")
 
 
 def extract_labels(pdf_path):
@@ -49,10 +54,14 @@ def _parse_page(text):
             barcode = line
         elif not price and "$" in line:
             price = line
-        elif _REF_RE.match(line) or _INTERNAL_REF_RE.match(line):
+        elif (
+            _REF_RE.match(line)
+            or _INTERNAL_REF_RE.match(line)
+            or _OPEN_REF_RE.match(line)
+        ):
             continue  # referencia interna del producto
         else:
-            name_parts.append(line)
+            name_parts.append(_REF_PREFIX_RE.sub("", line))
 
     return {
         "barcode": barcode,

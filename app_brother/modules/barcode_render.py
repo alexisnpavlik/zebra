@@ -1,9 +1,6 @@
 """Generacion del codigo de barras cuando el codigo se edita desde la GUI."""
 
-import io
-
 import barcode
-from barcode.writer import ImageWriter
 
 # Simbologia segun la cantidad de digitos; cualquier otro largo cae en Code 128.
 _SYMBOLOGY_BY_LENGTH = {
@@ -12,11 +9,8 @@ _SYMBOLOGY_BY_LENGTH = {
     8: "ean8",
 }
 
-_WRITER_OPTIONS = {
-    "module_height": 12.0,
-    "quiet_zone": 1.0,
-    "write_text": False,
-}
+# Módulos en blanco a cada lado para que el escáner reconozca inicio y fin.
+QUIET_ZONE_MODULES = 8
 
 
 def symbology(code):
@@ -49,21 +43,22 @@ def encoded_code(code):
     return barcode.get(symbology(code), code).get_fullcode()
 
 
-def render_png(code):
-    """Dibuja el código de barras (sólo barras, sin número legible) como PNG.
+def modules(code):
+    """Devuelve el patrón de barras del código, para dibujarlo como vectores.
+
+    No usa los writers de python-barcode a propósito: el de imagen depende de
+    Pillow, que no está en el ejecutable, y el vectorial imprime más nítido.
 
     Args:
         code: dígitos del código de barras a codificar.
 
     Returns:
-        Tupla (bytes del PNG, código realmente codificado). El código devuelto
-        puede diferir del pedido si la simbología recalcula el dígito verificador.
+        Tupla (patrón de '1' y '0' con un carácter por módulo, código codificado).
+        El código devuelto puede diferir del pedido si la simbología recalcula
+        el dígito verificador.
 
     Raises:
         ValueError: si el código no puede codificarse en ninguna simbología.
     """
-    name = symbology(code)
-    generator = barcode.get(name, code, writer=ImageWriter())
-    buffer = io.BytesIO()
-    generator.write(buffer, options=dict(_WRITER_OPTIONS))
-    return buffer.getvalue(), generator.get_fullcode()
+    generator = barcode.get(symbology(code), code)
+    return generator.build()[0], generator.get_fullcode()
