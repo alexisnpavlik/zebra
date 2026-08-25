@@ -29,7 +29,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Impresor de etiquetas Brother QL-800")
-        self.geometry("520x680")
+        self.geometry("520x640")
         self.resizable(False, False)
 
         # Cargar icono de la aplicación
@@ -55,10 +55,13 @@ class BrotherLabelPrinterApp(ctk.CTk):
         self.pdf_path = None
         self.labels = []
         self.printers_by_display = {}
+        self.settings_window = None
         self.settings_path = "brother_settings.json"
 
         # Cargar configuraciones guardadas
         self._load_settings()
+
+        self.barcode_scale = self.saved_barcode_scale
 
         self._build_widgets()
         self._refresh_printers()
@@ -103,11 +106,21 @@ class BrotherLabelPrinterApp(ctk.CTk):
             print(f"Error al guardar brother settings: {e}")
 
     def _build_widgets(self):
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=16, pady=(16, 10))
         ctk.CTkLabel(
-            self,
+            header,
             text="Impresor Brother QL-800",
             font=ctk.CTkFont(size=20, weight="bold"),
-        ).pack(pady=(20, 12))
+        ).pack(side="left", expand=True)
+        ctk.CTkButton(
+            header,
+            text="⚙",
+            width=36,
+            height=32,
+            font=ctk.CTkFont(size=18),
+            command=self._open_settings,
+        ).pack(side="right")
 
         # --- Selección de impresora ---
         printer_frame = ctk.CTkFrame(self)
@@ -170,19 +183,8 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self,
             text="Imprimir número de código de barras",
             variable=self.print_barcode_number_var,
-            command=self._on_barcode_number_toggle
+            command=self._save_settings
         ).pack(pady=(4, 0))
-
-        scale_frame = ctk.CTkFrame(self, fg_color="transparent")
-        scale_frame.pack(pady=(6, 0))
-        ctk.CTkLabel(scale_frame, text="Tamaño del número:").pack(side="left", padx=(0, 8))
-        self.barcode_scale_entry = ctk.CTkEntry(scale_frame, width=60, justify="center")
-        self.barcode_scale_entry.insert(0, f"{self.saved_barcode_scale:g}")
-        self.barcode_scale_entry.pack(side="left")
-        self.barcode_scale_entry.bind("<Return>", lambda event: self._on_barcode_scale_change())
-        self.barcode_scale_entry.bind("<FocusOut>", lambda event: self._on_barcode_scale_change())
-        ctk.CTkLabel(scale_frame, text="x").pack(side="left", padx=(6, 0))
-        self._update_barcode_scale_state()
 
         self.print_button = ctk.CTkButton(
             self,
@@ -200,34 +202,76 @@ class BrotherLabelPrinterApp(ctk.CTk):
         self.status_label.pack(side="bottom", pady=16)
 
     def _barcode_scale(self):
-        """Devuelve el factor de ampliación del número tipeado en la GUI, ya validado.
+        """Devuelve el factor de ampliación del número del código, ya validado.
 
         Returns:
-            Float entre BARCODE_NUMBER_SCALE_MIN y BARCODE_NUMBER_SCALE_MAX; si el
-            campo no existe todavía o tiene un valor inválido, el valor por defecto.
+            Float entre BARCODE_NUMBER_SCALE_MIN y BARCODE_NUMBER_SCALE_MAX.
         """
         try:
-            value = float(self.barcode_scale_entry.get().strip().replace(",", "."))
-        except (AttributeError, ValueError):
+            value = float(self.barcode_scale)
+        except (AttributeError, TypeError, ValueError):
             return BARCODE_NUMBER_SCALE
         return min(max(value, BARCODE_NUMBER_SCALE_MIN), BARCODE_NUMBER_SCALE_MAX)
 
-    def _on_barcode_scale_change(self):
-        """Normaliza lo tipeado en el campo de tamaño y guarda la preferencia."""
-        value = self._barcode_scale()
-        self.barcode_scale_entry.delete(0, "end")
-        self.barcode_scale_entry.insert(0, f"{value:g}")
+    def _open_settings(self):
+        """Abre la ventana de ajustes de tamaño, fuera de la pantalla principal."""
+        if getattr(self, "settings_window", None) is not None and self.settings_window.winfo_exists():
+            self.settings_window.focus()
+            return
+
+        window = ctk.CTkToplevel(self)
+        window.title("Ajustes")
+        window.geometry("380x210")
+        window.resizable(False, False)
+        window.transient(self)
+        self.settings_window = window
+
+        ctk.CTkLabel(
+            window, text="Ajustes de impresión", font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(pady=(16, 12))
+
+        row = ctk.CTkFrame(window, fg_color="transparent")
+        row.pack(padx=20, fill="x")
+        ctk.CTkLabel(row, text="Tamaño del número del código:").pack(side="left")
+        scale_entry = ctk.CTkEntry(row, width=60, justify="center")
+        scale_entry.insert(0, f"{self._barcode_scale():g}")
+        scale_entry.pack(side="left", padx=(8, 4))
+        ctk.CTkLabel(row, text="x").pack(side="left")
+
+        ctk.CTkLabel(
+            window,
+            text=(
+                f"Entre {BARCODE_NUMBER_SCALE_MIN:g}x y {BARCODE_NUMBER_SCALE_MAX:g}x sobre el tamaño "
+                "original.\nSe aplica sólo si se imprime el número del código."
+            ),
+            font=ctk.CTkFont(size=11),
+            justify="left",
+        ).pack(padx=20, pady=(10, 0), anchor="w")
+
+        ctk.CTkButton(
+            window, text="Guardar", height=36,
+            command=lambda: self._apply_settings(scale_entry.get()),
+        ).pack(pady=16)
+
+        window.after(200, window.grab_set)
+
+    def _apply_settings(self, scale_text):
+        """Valida lo tipeado en los ajustes, lo guarda y cierra la ventana.
+
+        Args:
+            scale_text: factor de ampliación tal como fue tipeado por el usuario.
+        """
+        try:
+            self.barcode_scale = float(scale_text.strip().replace(",", "."))
+        except (AttributeError, ValueError):
+            self.barcode_scale = BARCODE_NUMBER_SCALE
+        self.barcode_scale = self._barcode_scale()
         self._save_settings()
 
-    def _update_barcode_scale_state(self):
-        """Habilita el campo de tamaño sólo cuando se imprime el número del código."""
-        state = "normal" if self.print_barcode_number_var.get() else "disabled"
-        self.barcode_scale_entry.configure(state=state)
-
-    def _on_barcode_number_toggle(self):
-        """Se activa al tildar o destildar la impresión del número del código."""
-        self._update_barcode_scale_state()
-        self._save_settings()
+        if getattr(self, "settings_window", None) is not None:
+            self.settings_window.destroy()
+            self.settings_window = None
+        self._set_status(f"Tamaño del número: {self.barcode_scale:g}x", "gray")
 
     def _refresh_printers(self):
         """Detecta las impresoras del sistema y llena el desplegable."""
