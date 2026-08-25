@@ -29,16 +29,51 @@ def extract_labels(pdf_path):
     labels = []
     doc = fitz.open(pdf_path)
     try:
+        if not len(doc):
+            raise ValueError("El PDF no contiene paginas.")
         for page in doc:
-            labels.append(_parse_page(page.get_text()))
+            for cell in _cells(page):
+                label = _parse_page(page.get_text(clip=cell))
+                if not label["barcode"] and not label["name"]:
+                    continue  # recuadro vacio de la hoja
+                labels.append(label)
     finally:
         doc.close()
 
     if not labels:
-        raise ValueError("El PDF no contiene paginas.")
+        raise ValueError("El PDF no contiene etiquetas legibles.")
 
     print(f"PDF leido: {len(labels)} etiqueta(s)")
     return labels
+
+
+def _cells(page):
+    """Ubica los recuadros de etiqueta dibujados en una pagina.
+
+    Junta los trazos que se tocan: cada etiqueta de Odoo dibuja su marco con
+    varios rectangulos finos, asi que cada grupo resultante es una etiqueta.
+
+    Args:
+        page: pagina de PyMuPDF.
+
+    Returns:
+        Lista de fitz.Rect en orden de lectura. Si la pagina no tiene recuadros
+        (formato de una etiqueta por pagina), devuelve la pagina entera.
+    """
+    boxes = []
+    for drawing in page.get_drawings():
+        rect = fitz.Rect(drawing["rect"])
+        if rect.is_empty:
+            continue
+        for box in [b for b in boxes if fitz.Rect(b) + (-1, -1, 1, 1) & rect]:
+            boxes.remove(box)
+            rect = rect | box
+        boxes.append(rect)
+
+    cells = [b for b in boxes if b.width > 50 and b.height > 30]
+    if not cells:
+        return [page.rect]
+    return sorted(cells, key=lambda r: (round(r.y0), round(r.x0)))
 
 
 def _parse_page(text):

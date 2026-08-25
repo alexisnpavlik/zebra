@@ -377,7 +377,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self._set_status(f"No se pudo cargar el archivo: {e}", "red")
             return
 
-    def _redraw_barcode_number(self, page, barcode, new_text=None, scale=None, draw=True):
+    def _redraw_barcode_number(self, page, barcode, cell=None, new_text=None, scale=None, draw=True):
         """Tapa el número legible original y lo vuelve a dibujar más grande.
 
         El número se agranda hacia arriba desde su línea base original, sin invadir
@@ -388,6 +388,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
         Args:
             page: página de PyMuPDF a modificar.
             barcode: dígitos originales, para ubicar el texto dentro de la página.
+            cell: recuadro de la etiqueta; limita la búsqueda a esa etiqueta.
             new_text: texto a dibujar en lugar del original; None para redibujar el mismo.
             scale: factor de ampliación sobre el tamaño original; si es None se toma
                 el valor configurado en la GUI.
@@ -398,7 +399,8 @@ class BrotherLabelPrinterApp(ctk.CTk):
         if scale is None:
             scale = self._barcode_scale()
 
-        blocks = page.get_text("dict")["blocks"]
+        cell = fitz.Rect(cell) if cell is not None else page.rect
+        blocks = page.get_text("dict", clip=cell)["blocks"]
 
         span = None
         for block in blocks:
@@ -427,7 +429,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
         # Los dígitos crecen desde la línea base hacia arriba (~0.75 del cuerpo tipográfico).
         max_by_height = (baseline_y - top_limit - 1.0) / 0.75
         unit_width = fitz.get_text_length(text, fontname="helv", fontsize=1)
-        max_by_width = (page.rect.width - origin_x - 2.0) / unit_width if unit_width else original_size
+        max_by_width = (cell.x1 - origin_x - 2.0) / unit_width if unit_width else original_size
         new_size = max(min(original_size * scale, max_by_height, max_by_width), original_size)
 
         if draw and new_text is None and new_size <= original_size * 1.02:
@@ -452,20 +454,23 @@ class BrotherLabelPrinterApp(ctk.CTk):
             color=(0, 0, 0),
         )
 
-    def _replace_barcode_bars(self, page, pattern):
+    def _replace_barcode_bars(self, page, pattern, cell=None):
         """Tapa el código de barras original de Odoo y dibuja el nuevo como vectores.
 
         Args:
             page: página de PyMuPDF a modificar.
             pattern: patrón de '1' y '0', un carácter por módulo del código.
+            cell: recuadro de la etiqueta; limita el reemplazo a esa etiqueta.
         """
         import fitz
 
-        images = page.get_images(full=True)
-        if not images:
+        cell = fitz.Rect(cell) if cell is not None else page.rect
+        boxes = [page.get_image_bbox(img) for img in page.get_images(full=True)]
+        boxes = [b for b in boxes if b.intersects(cell)]
+        if not boxes:
             return
 
-        rect = max((page.get_image_bbox(img) for img in images), key=lambda r: r.get_area())
+        rect = max(boxes, key=lambda r: r.get_area())
         page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
 
         quiet = barcode_render.QUIET_ZONE_MODULES
@@ -485,106 +490,84 @@ class BrotherLabelPrinterApp(ctk.CTk):
             x += module_width
 
     def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None, override_barcode=None):
-        """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm)."""
+        """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm).
+
+        Cada etiqueta se recorta por su recuadro dentro de la página, así que
+        funciona tanto con el formato de una etiqueta por página como con las
+        hojas A4 que traen varias etiquetas.
+        """
         import fitz
 
         override_barcode_pattern = None
         if override_barcode:
             override_barcode_pattern, override_barcode = barcode_render.modules(override_barcode)
-        
+
         doc = fitz.open(original_pdf_path)
         new_doc = fitz.open()
-        
+
         # Ancho físico de la página de la etiqueta (29 mm)
         target_width_pt = 29 * 72 / 25.4  # ~82.2 pt
         # Ancho útil imprimible seguro (25 mm) para evitar el límite físico de impresión de 27 mm de la Brother
         printable_width_pt = 25 * 72 / 25.4  # ~70.9 pt
-        
+
         # Al imprimir como tira continua consolidada, usamos siempre alto de 15 mm para espacio mínimo
         height_mm = 15
         target_height_pt = height_mm * 72 / 25.4  # ~42.5 pt
-        
+
         # Margen horizontal de seguridad para centrar el contenido imprimible (~5.6 pt)
         x_offset = (target_width_pt - printable_width_pt) / 2
-        
+
         try:
-            num_pages = len(doc)
-            total_height_pt = num_pages * target_height_pt
-            
-            # Crear una única página larga para evitar que CUPS corte entre etiquetas
-            new_page = new_doc.new_page(width=target_width_pt, height=total_height_pt)
-            
-            for i, page in enumerate(doc):
-                # 1. Tapar precio si corresponde
+            if not labels:
+                labels = [{"page": p.number, "rect": tuple(p.rect)} for p in doc]
+
+            # 1. Modificar el contenido de cada etiqueta dentro de su recuadro
+            for label in labels:
+                page = doc[label.get("page", 0)]
+                cell = fitz.Rect(label.get("rect") or page.rect)
+
+                # 1.1. Tapar precio si corresponde
                 if not print_price:
-                    rects = page.search_for("$")
-                    for r in rects:
-                        extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
+                    for r in page.search_for("$", clip=cell):
+                        extended_rect = fitz.Rect(cell.x0, r.y0 - 2, cell.x1, r.y1 + 2)
                         page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
 
-                # 2. Reemplazar, tapar o agrandar el código de barras y su número
-                if labels and i < len(labels) and labels[i]["barcode"]:
+                # 1.2. Reemplazar, tapar o agrandar el código de barras y su número
+                if label.get("barcode"):
                     if override_barcode_pattern:
-                        self._replace_barcode_bars(page, override_barcode_pattern)
+                        self._replace_barcode_bars(page, override_barcode_pattern, cell)
                         self._redraw_barcode_number(
                             page,
-                            labels[i]["barcode"],
+                            label["barcode"],
+                            cell,
                             new_text=override_barcode,
                             draw=print_barcode_number,
                         )
                     elif not print_barcode_number:
-                        rects = page.search_for(labels[i]["barcode"])
-                        for r in rects:
-                            extended_rect = fitz.Rect(0, r.y0 - 2, page.rect.width, r.y1 + 2)
-                            page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+                        self._redraw_barcode_number(page, label["barcode"], cell, draw=False)
                     else:
-                        self._redraw_barcode_number(page, labels[i]["barcode"])
+                        self._redraw_barcode_number(page, label["barcode"], cell)
 
-                # 2.5. Reemplazar el nombre original si se especificó uno editado
-                if override_name and labels and i < len(labels):
-                    name_lines = labels[i].get("name_lines") or []
-                    line_rects = [
-                        r for line in name_lines for r in page.search_for(line)
-                    ]
-                    if line_rects:
-                        name_rect = line_rects[0]
-                        for r in line_rects[1:]:
-                            name_rect.include_rect(r)
-                        extended_rect = fitz.Rect(
-                            0, name_rect.y0 - 2, page.rect.width, name_rect.y1 + 2
-                        )
-                        page.draw_rect(
-                            extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True
-                        )
-                        text_unit_width = fitz.get_text_length(
-                            override_name, fontname="helv", fontsize=1
-                        )
-                        font_by_width = (extended_rect.width * 0.92) / text_unit_width
-                        font_by_height = (extended_rect.height * 0.9) / 1.15
-                        font_size = max(6, min(14, font_by_width, font_by_height))
-                        page.insert_textbox(
-                            extended_rect,
-                            override_name,
-                            fontsize=font_size,
-                            fontname="helv",
-                            align=1,
-                        )
+                # 1.3. Reemplazar el nombre original si se especificó uno editado
+                if override_name:
+                    self._replace_name(page, label.get("name_lines") or [], override_name, cell)
 
-                # 3. Conservamos el 100% de la página original (sin recortes para evitar cortes de texto)
-                orig_rect = page.rect
-                clip_rect = orig_rect
+            # 2. Componer la tira: una etiqueta debajo de la otra en una sola página larga
+            total_height_pt = len(labels) * target_height_pt
+            new_page = new_doc.new_page(width=target_width_pt, height=total_height_pt)
 
-                # 4. Calcular la altura proporcional de acuerdo con el ancho útil imprimible de 25 mm
+            for i, label in enumerate(labels):
+                page = doc[label.get("page", 0)]
+                clip_rect = fitz.Rect(label.get("rect") or page.rect)
+
+                # Altura proporcional de acuerdo con el ancho útil imprimible de 25 mm
                 content_height_pt = printable_width_pt * (clip_rect.height / clip_rect.width)
-                
-                # Centrar verticalmente el contenido útil dentro del alto de la página de 15 mm
+
+                # Centrar verticalmente el contenido útil dentro del alto de la etiqueta
                 y_start = i * target_height_pt
                 y_offset = y_start + max(0.0, (target_height_pt - content_height_pt) / 2)
-                
-                # Rectángulo de dibujo con márgenes seguros
+
                 draw_rect = fitz.Rect(x_offset, y_offset, x_offset + printable_width_pt, y_offset + content_height_pt)
-                
-                # Dibujar en la página larga en las coordenadas específicas
                 new_page.show_pdf_page(draw_rect, doc, page.number, clip=clip_rect)
 
             # Guardamos el PDF temporal resultante en un archivo fijo
@@ -598,6 +581,40 @@ class BrotherLabelPrinterApp(ctk.CTk):
         finally:
             doc.close()
             new_doc.close()
+
+    def _replace_name(self, page, name_lines, new_name, cell):
+        """Tapa el nombre original de la etiqueta y escribe el nombre editado.
+
+        Args:
+            page: página de PyMuPDF a modificar.
+            name_lines: líneas del nombre original, para ubicarlo en la página.
+            new_name: nombre a escribir en su lugar.
+            cell: recuadro de la etiqueta dentro de la página.
+        """
+        import fitz
+
+        line_rects = [r for line in name_lines for r in page.search_for(line, clip=cell)]
+        if not line_rects:
+            return
+
+        name_rect = line_rects[0]
+        for r in line_rects[1:]:
+            name_rect.include_rect(r)
+
+        extended_rect = fitz.Rect(cell.x0, name_rect.y0 - 2, cell.x1, name_rect.y1 + 2)
+        page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
+
+        text_unit_width = fitz.get_text_length(new_name, fontname="helv", fontsize=1)
+        font_by_width = (extended_rect.width * 0.92) / text_unit_width
+        font_by_height = (extended_rect.height * 0.9) / 1.15
+        font_size = max(6, min(14, font_by_width, font_by_height))
+        page.insert_textbox(
+            extended_rect,
+            new_name,
+            fontsize=font_size,
+            fontname="helv",
+            align=1,
+        )
 
     def _print(self):
         if not self.labels:

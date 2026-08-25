@@ -18,27 +18,70 @@ _REF_PREFIX_RE = re.compile(r"^\[[^\]]*\]\s*")
 
 
 def extract_labels(pdf_path):
-    """Extrae los datos de etiqueta de cada pagina de un PDF.
+    """Extrae los datos de cada etiqueta de un PDF.
+
+    Soporta tanto el formato de una etiqueta por pagina como las hojas A4 con
+    varias etiquetas por pagina: en ese caso cada recuadro dibujado por Odoo se
+    trata como una etiqueta aparte.
 
     Args:
         pdf_path: ruta al archivo PDF.
 
     Returns:
-        Lista de dicts con claves 'barcode', 'name' y 'price', una por pagina.
+        Lista de dicts con claves 'barcode', 'name', 'name_lines', 'price',
+        'page' (numero de pagina) y 'rect' (recuadro de la etiqueta dentro de
+        esa pagina, en puntos).
     """
     labels = []
     doc = fitz.open(pdf_path)
     try:
-        for page in doc:
-            labels.append(_parse_page(page.get_text()))
+        if not len(doc):
+            raise ValueError("El PDF no contiene paginas.")
+        for number, page in enumerate(doc):
+            for cell in _cells(page):
+                label = _parse_page(page.get_text(clip=cell))
+                if not label["barcode"] and not label["name"]:
+                    continue  # recuadro vacio de la hoja
+                label["page"] = number
+                label["rect"] = tuple(cell)
+                labels.append(label)
     finally:
         doc.close()
 
     if not labels:
-        raise ValueError("El PDF no contiene paginas.")
+        raise ValueError("El PDF no contiene etiquetas legibles.")
 
     print(f"PDF leido: {len(labels)} etiqueta(s)")
     return labels
+
+
+def _cells(page):
+    """Ubica los recuadros de etiqueta dibujados en una pagina.
+
+    Junta los trazos que se tocan: cada etiqueta de Odoo dibuja su marco con
+    varios rectangulos finos, asi que cada grupo resultante es una etiqueta.
+
+    Args:
+        page: pagina de PyMuPDF.
+
+    Returns:
+        Lista de fitz.Rect en orden de lectura. Si la pagina no tiene recuadros
+        (formato de una etiqueta por pagina), devuelve la pagina entera.
+    """
+    boxes = []
+    for drawing in page.get_drawings():
+        rect = fitz.Rect(drawing["rect"])
+        if rect.is_empty:
+            continue
+        for box in [b for b in boxes if fitz.Rect(b) + (-1, -1, 1, 1) & rect]:
+            boxes.remove(box)
+            rect = rect | box
+        boxes.append(rect)
+
+    cells = [b for b in boxes if b.width > 50 and b.height > 30]
+    if not cells:
+        return [page.rect]
+    return sorted(cells, key=lambda r: (round(r.y0), round(r.x0)))
 
 
 def _parse_page(text):
