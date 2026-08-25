@@ -9,10 +9,16 @@ Soporta etiquetas de 3 columnas (formato 29×20 mm) en lenguaje **EPL** (GC420t 
 ## Uso
 
 1. Seleccioná la impresora en el desplegable (o hacé clic en **Actualizar**)
-2. Cargá un archivo PDF o TXT con **Cargar PDF / TXT**
+2. Cargá el archivo de etiquetas: la app Zebra acepta PDF o TXT, la app Brother
+   trabaja sólo con el **TXT (ZPL)** que exporta Odoo
 3. Verificá la vista previa
-4. Marcá **Imprimir precio** si querés incluirlo en la etiqueta (desmarcado por defecto)
-5. Hacé clic en **Imprimir**
+4. Corregí el código o el nombre en sus campos si hace falta
+5. Marcá **Imprimir precio** si querés incluirlo en la etiqueta (desmarcado por defecto)
+6. Hacé clic en **Imprimir**
+
+La app Brother no reenvía el archivo de Odoo: lee los datos del TXT y dibuja la
+etiqueta de 29 mm ella misma (nombre, código de barras, número y precio). El
+tamaño del número se ajusta desde el engranaje.
 
 ---
 

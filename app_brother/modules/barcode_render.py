@@ -1,6 +1,7 @@
 """Generacion del codigo de barras cuando el codigo se edita desde la GUI."""
 
 import barcode
+import fitz
 
 # Simbologia segun la cantidad de digitos; cualquier otro largo cae en Code 128.
 _SYMBOLOGY_BY_LENGTH = {
@@ -62,3 +63,28 @@ def modules(code):
     """
     generator = barcode.get(symbology(code), code)
     return generator.build()[0], generator.get_fullcode()
+
+
+def draw_bars(page, rect, pattern):
+    """Dibuja las barras del código dentro de un rectángulo, como vectores.
+
+    Los rectángulos van sin trazo: el borde de 1 pt que dibuja PyMuPDF por
+    defecto ensancha cada barra y el código deja de leerse.
+
+    Args:
+        page: página de PyMuPDF donde dibujar.
+        rect: rectángulo que ocupa el código, zona muda incluida.
+        pattern: patrón de '1' y '0', un carácter por módulo.
+    """
+    module_width = rect.width / (len(pattern) + 2 * QUIET_ZONE_MODULES)
+    x = rect.x0 + QUIET_ZONE_MODULES * module_width
+
+    run_start = None
+    for index, module in enumerate(pattern + "0"):
+        if module == "1" and run_start is None:
+            run_start = index
+        elif module == "0" and run_start is not None:
+            bar = fitz.Rect(x + (run_start - index) * module_width, rect.y0, x, rect.y1)
+            page.draw_rect(bar, color=None, fill=(0, 0, 0), width=0, overlay=True)
+            run_start = None
+        x += module_width

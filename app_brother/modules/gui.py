@@ -7,8 +7,9 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from modules import barcode_render
-from modules import pdf_extract
+from modules import label_render
 from modules import printer
+from modules import txt_extract
 
 
 # Factor de ampliacion del numero legible del codigo de barras al imprimir.
@@ -52,7 +53,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
         except Exception as e:
             print(f"No se pudo cargar el icono: {e}")
 
-        self.pdf_path = None
+        self.txt_path = None
         self.labels = []
         self.printers_by_display = {}
         self.settings_window = None
@@ -140,11 +141,11 @@ class BrotherLabelPrinterApp(ctk.CTk):
 
         # --- Carga de PDF ---
         ctk.CTkButton(
-            self, text="Cargar PDF de Etiquetas", command=self._load_pdf, height=40
+            self, text="Cargar TXT de Etiquetas", command=self._load_txt, height=40
         ).pack(pady=(16, 4))
 
         self.info_label = ctk.CTkLabel(
-            self, text="Ningún PDF cargado", font=ctk.CTkFont(size=13)
+            self, text="Ningún archivo cargado", font=ctk.CTkFont(size=13)
         )
         self.info_label.pack(pady=(12, 8))
 
@@ -327,7 +328,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
     def _update_info_and_preview(self):
         """Actualiza las etiquetas informativas y la vista previa del PDF cargado."""
         if not self.labels:
-            self.info_label.configure(text="Ningún PDF cargado")
+            self.info_label.configure(text="Ningún archivo cargado")
             self._set_preview("")
             self.barcode_entry.delete(0, "end")
             self.name_entry.delete(0, "end")
@@ -335,7 +336,7 @@ class BrotherLabelPrinterApp(ctk.CTk):
             return
 
         count = len(self.labels)
-        filename = self.pdf_path.rsplit("/", 1)[-1] if self.pdf_path else "Archivo cargado"
+        filename = self.txt_path.rsplit("/", 1)[-1] if self.txt_path else "Archivo cargado"
         self.info_label.configure(
             text=f"{filename}\n{count} etiqueta(s) individual(es) a imprimir"
         )
@@ -353,11 +354,12 @@ class BrotherLabelPrinterApp(ctk.CTk):
         self.name_entry.insert(0, first["name"])
         self.print_button.configure(state="normal")
 
-    def _load_pdf(self):
+    def _load_txt(self):
+        """Abre un TXT con las etiquetas ZPL exportadas de Odoo."""
         path = filedialog.askopenfilename(
-            title="Seleccionar archivo PDF de etiquetas",
+            title="Seleccionar archivo TXT de etiquetas",
             filetypes=[
-                ("Archivos PDF", "*.pdf"),
+                ("Archivos TXT (ZPL)", "*.txt"),
                 ("Todos", "*.*"),
             ],
         )
@@ -365,256 +367,41 @@ class BrotherLabelPrinterApp(ctk.CTk):
             return
 
         try:
-            self._set_status("Leyendo PDF...", "gray")
-            self.labels = pdf_extract.extract_labels(path)
-            self.pdf_path = path
+            self._set_status("Leyendo TXT...", "gray")
+            self.labels = txt_extract.extract_labels(path)
+            self.txt_path = path
             self._update_info_and_preview()
-            self._set_status("PDF cargado. Listo para imprimir.", "green")
+            self._set_status("TXT cargado. Listo para imprimir.", "green")
         except Exception as e:
-            self.pdf_path = None
+            self.txt_path = None
             self.labels = []
             self._update_info_and_preview()
             self._set_status(f"No se pudo cargar el archivo: {e}", "red")
-            return
 
-    def _redraw_barcode_number(self, page, barcode, cell=None, new_text=None, scale=None, draw=True):
-        """Tapa el número legible original y lo vuelve a dibujar más grande.
-
-        El número se agranda hacia arriba desde su línea base original, sin invadir
-        el espacio de la imagen del código de barras ni salirse del ancho de la página.
-        Ubica el texto por coincidencia exacta del span, así un código corto que
-        aparece dentro del nombre o de la referencia interna no las afecta.
+    def _labels_to_print(self, override_name=None, override_barcode=None):
+        """Devuelve las etiquetas a imprimir, con las ediciones ya aplicadas.
 
         Args:
-            page: página de PyMuPDF a modificar.
-            barcode: dígitos originales, para ubicar el texto dentro de la página.
-            cell: recuadro de la etiqueta; limita la búsqueda a esa etiqueta.
-            new_text: texto a dibujar en lugar del original; None para redibujar el mismo.
-            scale: factor de ampliación sobre el tamaño original; si es None se toma
-                el valor configurado en la GUI.
-            draw: False para sólo taparlo, sin volver a dibujarlo.
+            override_name: nombre editado a usar en todas las etiquetas, o None.
+            override_barcode: código editado a usar en todas las etiquetas, o None.
+
+        Returns:
+            Lista de dicts lista para dibujar.
         """
-        import fitz
+        labels = []
+        for label in self.labels:
+            copy = dict(label)
+            if override_name:
+                copy["name"] = override_name
+            if override_barcode:
+                copy["barcode"] = override_barcode
+            labels.append(copy)
+        return labels
 
-        if scale is None:
-            scale = self._barcode_scale()
-
-        cell = fitz.Rect(cell) if cell is not None else page.rect
-        blocks = page.get_text("dict", clip=cell)["blocks"]
-
-        span = None
-        for block in blocks:
-            for line in block.get("lines", []):
-                for candidate in line["spans"]:
-                    if candidate["text"].strip() == barcode:
-                        span = candidate
-                        break
-
-        if span is None:
-            return
-
-        rect = fitz.Rect(span["bbox"])
-        origin_x, baseline_y = span["origin"]
-        original_size = span["size"]
-
-        # Lo más bajo que llega el contenido que está por encima (la imagen del código).
-        top_limit = 0.0
-        for block in blocks:
-            block_rect = fitz.Rect(block["bbox"])
-            if block_rect.y1 <= rect.y0 + 0.5:
-                top_limit = max(top_limit, block_rect.y1)
-
-        text = new_text if new_text is not None else barcode
-
-        # Los dígitos crecen desde la línea base hacia arriba (~0.75 del cuerpo tipográfico).
-        max_by_height = (baseline_y - top_limit - 1.0) / 0.75
-        unit_width = fitz.get_text_length(text, fontname="helv", fontsize=1)
-        max_by_width = (cell.x1 - origin_x - 2.0) / unit_width if unit_width else original_size
-        new_size = max(min(original_size * scale, max_by_height, max_by_width), original_size)
-
-        if draw and new_text is None and new_size <= original_size * 1.02:
-            return  # no hay espacio para agrandarlo, se deja como está
-
-        white_rect = fitz.Rect(
-            rect.x0 - 1,
-            max(rect.y0 - 1, top_limit + 0.2),
-            max(rect.x1, rect.x0 + new_size * unit_width) + 1,
-            rect.y1 + 1,
-        )
-        page.draw_rect(white_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-
-        if not draw:
-            return
-
-        page.insert_text(
-            fitz.Point(origin_x, baseline_y),
-            text,
-            fontsize=new_size,
-            fontname="helv",
-            color=(0, 0, 0),
-        )
-
-    def _replace_barcode_bars(self, page, pattern, cell=None):
-        """Tapa el código de barras original de Odoo y dibuja el nuevo como vectores.
-
-        Args:
-            page: página de PyMuPDF a modificar.
-            pattern: patrón de '1' y '0', un carácter por módulo del código.
-            cell: recuadro de la etiqueta; limita el reemplazo a esa etiqueta.
-        """
-        import fitz
-
-        cell = fitz.Rect(cell) if cell is not None else page.rect
-        boxes = [page.get_image_bbox(img) for img in page.get_images(full=True)]
-        boxes = [b for b in boxes if b.intersects(cell)]
-        if not boxes:
-            return
-
-        rect = max(boxes, key=lambda r: r.get_area())
-        page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-
-        quiet = barcode_render.QUIET_ZONE_MODULES
-        module_width = rect.width / (len(pattern) + 2 * quiet)
-        x = rect.x0 + quiet * module_width
-
-        run_start = None
-        for index, module in enumerate(pattern + "0"):
-            if module == "1" and run_start is None:
-                run_start = index
-            elif module == "0" and run_start is not None:
-                bar = fitz.Rect(
-                    x + (run_start - index) * module_width, rect.y0, x, rect.y1
-                )
-                page.draw_rect(bar, color=None, fill=(0, 0, 0), width=0, overlay=True)
-                run_start = None
-            x += module_width
-
-    def _prepare_pdf_for_printing(self, original_pdf_path, print_price, labels=None, print_barcode_number=True, override_name=None, override_barcode=None):
-        """Prepara el PDF tapando el precio (si print_price es False), aplicando un margen de seguridad física horizontal de 2 mm a cada lado y reescalándolo a 29 mm de ancho y el alto óptimo de tira continua (15 mm).
-
-        Cada etiqueta se recorta por su recuadro dentro de la página, así que
-        funciona tanto con el formato de una etiqueta por página como con las
-        hojas A4 que traen varias etiquetas.
-        """
-        import fitz
-
-        override_barcode_pattern = None
-        if override_barcode:
-            override_barcode_pattern, override_barcode = barcode_render.modules(override_barcode)
-
-        doc = fitz.open(original_pdf_path)
-        new_doc = fitz.open()
-
-        # Ancho físico de la página de la etiqueta (29 mm)
-        target_width_pt = 29 * 72 / 25.4  # ~82.2 pt
-        # Ancho útil imprimible seguro (25 mm) para evitar el límite físico de impresión de 27 mm de la Brother
-        printable_width_pt = 25 * 72 / 25.4  # ~70.9 pt
-
-        # Al imprimir como tira continua consolidada, usamos siempre alto de 15 mm para espacio mínimo
-        height_mm = 15
-        target_height_pt = height_mm * 72 / 25.4  # ~42.5 pt
-
-        # Margen horizontal de seguridad para centrar el contenido imprimible (~5.6 pt)
-        x_offset = (target_width_pt - printable_width_pt) / 2
-
-        try:
-            if not labels:
-                labels = [{"page": p.number, "rect": tuple(p.rect)} for p in doc]
-
-            # 1. Modificar el contenido de cada etiqueta dentro de su recuadro
-            for label in labels:
-                page = doc[label.get("page", 0)]
-                cell = fitz.Rect(label.get("rect") or page.rect)
-
-                # 1.1. Tapar precio si corresponde
-                if not print_price:
-                    for r in page.search_for("$", clip=cell):
-                        extended_rect = fitz.Rect(cell.x0, r.y0 - 2, cell.x1, r.y1 + 2)
-                        page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-
-                # 1.2. Reemplazar, tapar o agrandar el código de barras y su número
-                if label.get("barcode"):
-                    if override_barcode_pattern:
-                        self._replace_barcode_bars(page, override_barcode_pattern, cell)
-                        self._redraw_barcode_number(
-                            page,
-                            label["barcode"],
-                            cell,
-                            new_text=override_barcode,
-                            draw=print_barcode_number,
-                        )
-                    elif not print_barcode_number:
-                        self._redraw_barcode_number(page, label["barcode"], cell, draw=False)
-                    else:
-                        self._redraw_barcode_number(page, label["barcode"], cell)
-
-                # 1.3. Reemplazar el nombre original si se especificó uno editado
-                if override_name:
-                    self._replace_name(page, label.get("name_lines") or [], override_name, cell)
-
-            # 2. Componer la tira: una etiqueta debajo de la otra en una sola página larga
-            total_height_pt = len(labels) * target_height_pt
-            new_page = new_doc.new_page(width=target_width_pt, height=total_height_pt)
-
-            for i, label in enumerate(labels):
-                page = doc[label.get("page", 0)]
-                clip_rect = fitz.Rect(label.get("rect") or page.rect)
-
-                # Altura proporcional de acuerdo con el ancho útil imprimible de 25 mm
-                content_height_pt = printable_width_pt * (clip_rect.height / clip_rect.width)
-
-                # Centrar verticalmente el contenido útil dentro del alto de la etiqueta
-                y_start = i * target_height_pt
-                y_offset = y_start + max(0.0, (target_height_pt - content_height_pt) / 2)
-
-                draw_rect = fitz.Rect(x_offset, y_offset, x_offset + printable_width_pt, y_offset + content_height_pt)
-                new_page.show_pdf_page(draw_rect, doc, page.number, clip=clip_rect)
-
-            # Guardamos el PDF temporal resultante en un archivo fijo
-            dir_name = os.path.dirname(original_pdf_path) or "."
-            temp_pdf_path = os.path.join(dir_name, "brother_temp_print.pdf")
-            new_doc.save(temp_pdf_path)
-            return temp_pdf_path
-        except Exception as e:
-            print(f"Error al preparar el PDF para impresión: {e}")
-            return original_pdf_path
-        finally:
-            doc.close()
-            new_doc.close()
-
-    def _replace_name(self, page, name_lines, new_name, cell):
-        """Tapa el nombre original de la etiqueta y escribe el nombre editado.
-
-        Args:
-            page: página de PyMuPDF a modificar.
-            name_lines: líneas del nombre original, para ubicarlo en la página.
-            new_name: nombre a escribir en su lugar.
-            cell: recuadro de la etiqueta dentro de la página.
-        """
-        import fitz
-
-        line_rects = [r for line in name_lines for r in page.search_for(line, clip=cell)]
-        if not line_rects:
-            return
-
-        name_rect = line_rects[0]
-        for r in line_rects[1:]:
-            name_rect.include_rect(r)
-
-        extended_rect = fitz.Rect(cell.x0, name_rect.y0 - 2, cell.x1, name_rect.y1 + 2)
-        page.draw_rect(extended_rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
-
-        text_unit_width = fitz.get_text_length(new_name, fontname="helv", fontsize=1)
-        font_by_width = (extended_rect.width * 0.92) / text_unit_width
-        font_by_height = (extended_rect.height * 0.9) / 1.15
-        font_size = max(6, min(14, font_by_width, font_by_height))
-        page.insert_textbox(
-            extended_rect,
-            new_name,
-            fontsize=font_size,
-            fontname="helv",
-            align=1,
-        )
+    def _temp_pdf_path(self):
+        """Ruta del PDF temporal que se manda a la impresora."""
+        dir_name = os.path.dirname(self.txt_path or "") or "."
+        return os.path.join(dir_name, "brother_temp_print.pdf")
 
     def _print(self):
         if not self.labels:
@@ -650,14 +437,13 @@ class BrotherLabelPrinterApp(ctk.CTk):
             self._set_status(f"Enviando a {target['name']}...", "gray")
             self.print_button.configure(state="disabled")
 
-            # Preparar archivo consolidando las etiquetas en tira continua de 15mm
-            temp_file = self._prepare_pdf_for_printing(
-                self.pdf_path,
-                self.print_price_var.get(),
-                labels=self.labels,
+            # Dibujar la tira continua con las etiquetas, una debajo de la otra
+            temp_file = label_render.build_strip(
+                self._labels_to_print(override_name, override_barcode),
+                self._temp_pdf_path(),
+                print_price=self.print_price_var.get(),
                 print_barcode_number=self.print_barcode_number_var.get(),
-                override_name=override_name,
-                override_barcode=override_barcode,
+                number_scale=self._barcode_scale(),
             )
 
             # Imprimir PDF nativo directamente sin corte automático intermedio (sólo al final de la tira)
