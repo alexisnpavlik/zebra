@@ -447,7 +447,12 @@ class BrotherLabelPrinterApp(ctk.CTk):
             )
 
             # Imprimir PDF nativo directamente sin corte automático intermedio (sólo al final de la tira)
-            job_id = printer.print_pdf(temp_file, target["name"], auto_cut=False)
+            job_id = printer.print_pdf(
+                temp_file,
+                target["name"],
+                auto_cut=False,
+                segment_height_pt=label_render.LABEL_HEIGHT_MM * 72 / 25.4,
+            )
             self._set_status(
                 f"Impreso correctamente ({job_id}).{barcode_notice}",
                 "orange" if barcode_notice else "green",

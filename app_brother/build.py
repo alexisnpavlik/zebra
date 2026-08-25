@@ -24,6 +24,7 @@ def main():
         "--collect-all", "customtkinter",
         "--collect-all", "fitz",
         "--collect-all", "barcode",
+        "--collect-all", "PIL",
         os.path.join(script_dir, "main.py"),
     ]
 
